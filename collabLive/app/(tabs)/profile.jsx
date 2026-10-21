@@ -13,9 +13,8 @@ const PROFILE_KEY = '@collablive/profile';
 
 export default function ProfileScreen() {
     const [displayName, setDisplayName] = useState('');
-    const [profileId, setProfileId] = useState(null);
-    const [savedName, setSavedName] = useState('');
     const [loading, setLoading] = useState(true);
+    const [savedName, setSavedName] = useState('');
 
     useEffect(() => {
         async function loadProfile() {
@@ -25,7 +24,6 @@ export default function ProfileScreen() {
                 if (saved) {
                     const profile = JSON.parse(saved);
                     setDisplayName(profile.display_name ?? '');
-                    setProfileId(profile.profile_id);
                 }
             } catch (error) {
                 Alert.alert('Error', 'Could not load your profile.');
@@ -45,26 +43,16 @@ export default function ProfileScreen() {
             return;
         }
 
-        const profile = {
-            profile_id:
-                profileId ?? `${Date.now()} -${Math.random().toString(36).slice(2, 9)} `,
-            display_name: name,
-        };
-
         try {
-            await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-
-            const saved = await AsyncStorage.getItem(PROFILE_KEY);
-            const verifiedProfile = JSON.parse(saved);
-
-            setProfileId(verifiedProfile.profile_id);
-            setDisplayName(verifiedProfile.display_name);
-            setSavedName(verifiedProfile.display_name);
-
-            Alert.alert(
-                'Profile Verified',
-                `Saved name: ${verifiedProfile.display_name}`
+            await AsyncStorage.setItem(
+                PROFILE_KEY,
+                JSON.stringify({ display_name: name })
             );
+
+            setDisplayName(name);
+            setSavedName(name);
+
+            Alert.alert('Profile Saved', `Saved name: ${name}`);
         } catch (error) {
             Alert.alert('Error', 'Could not save your profile.');
         }
@@ -91,7 +79,7 @@ export default function ProfileScreen() {
                 <Text style={styles.buttonText}>Save Profile</Text>
             </Pressable>
 
-            {profileId && (
+            {savedName && (
                 <>
                     <Text style={styles.info}>Profile created on this device.</Text>
                     <Text style={styles.info}>Saved Name: {savedName}</Text>
