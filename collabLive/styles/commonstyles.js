@@ -65,4 +65,73 @@ export const commonStyles = StyleSheet.create({
         fontSize: typography.body,
         fontWeight: '600',
     },
+    screen: {
+        flex: 1,
+        backgroundColor: '#f9fafb',
+    },
+    header: {
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e5e7eb',
+        backgroundColor: '#ffffff',
+    },
+    title: {
+        fontSize: 22,
+        fontWeight: '700',
+        color: '#111827',
+    },
+    info: {
+        color: '#6b7280',
+        marginTop: 6,
+    },
+    slideScroll: {
+        flex: 1,
+    },
+    slideContent: {
+        padding: 20,
+        flexGrow: 1,
+        backgroundColor: '#ffffff',
+        margin: 12,
+        borderRadius: 10,
+    },
+
+    centered: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    navigation: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 12,
+        borderTopWidth: 1,
+        borderTopColor: '#e5e7eb',
+        backgroundColor: '#ffffff',
+    },
+    navButton: {
+        backgroundColor: '#2563eb',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+    },
+    navButtonRed: {
+        backgroundColor: '#dc2626',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+    },
+    disabledButton: {
+        opacity: 0.35,
+    },
+    navText: {
+        color: '#ffffff',
+        fontWeight: '600',
+    },
+    counter: {
+        color: '#374151',
+        fontWeight: '500',
+    },
+
 });

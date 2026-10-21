@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react';
 import {
     View,
@@ -9,49 +8,158 @@ import {
     Alert,
     StyleSheet,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams } from 'expo-router';
 import { apiRequest } from '../../lib/api';
 import SlidePreviewer from '../../components/slide-previewer';
 import { useRouter } from 'expo-router';
-
+import { commonStyles } from '../../styles/commonstyles';
+import * as Location from 'expo-location';
+const PROFILE_KEY = '@collablive/profile';
 export default function StartPresentationScreen() {
     const { presentationId, groupId, attendeeId } = useLocalSearchParams();
-
     const [slides, setSlides] = useState([]);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [loading, setLoading] = useState(true);
     const [completed, setCompleted] = useState(false);
     const router = useRouter();
     const [finishing, setFinishing] = useState(false);
+    const isLastSlide = completed || selectedIndex === slides.length - 1;
+    const [displayName, setDisplayName] = useState('');
+    const [latitude, setLatitude] = useState(null);
+    const [longitude, setLongitude] = useState(null);
+    const [leaderId, setLeaderId] = useState(null);
+    const [presentationTitle, setPresentationTitle] = useState(null);
 
     useEffect(() => {
+
+        async function trackLeaderLocation() {
+            let subscription;
+
+            try {
+                const permission =
+                    await Location.requestForegroundPermissionsAsync();
+
+                if (!permission.granted || cancelled) return;
+
+                const result = await apiRequest('/study_group');
+                const groups = Array.isArray(result)
+                    ? result
+                    : result.data ?? [];
+
+                const currentGroup = groups.find(
+                    item =>
+                        String(item.group_id ?? item.id) === String(groupId)
+                );
+
+                if (
+                    !currentGroup ||
+                    String(currentGroup.leader_id) !== String(attendeeId) ||
+                    currentGroup.is_active === false
+                ) {
+                    return;
+                }
+
+                async function updateLocation(position) {
+                    if (cancelled) return;
+
+                    try {
+                        await apiRequest(
+                            `/study_group/${currentGroup.id ?? currentGroup.group_id}`,
+                            {
+                                method: 'PATCH',
+                                body: JSON.stringify({
+                                    latitude: position.coords.latitude,
+                                    longitude: position.coords.longitude,
+                                }),
+                            }
+                        );
+
+                        setLatitude(position.coords.latitude);
+                        setLongitude(position.coords.longitude);
+                    } catch (error) {
+                        console.error('Could not update group location:', error);
+                    }
+                }
+
+                const position = await Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Balanced,
+                });
+
+                await updateLocation(position);
+
+                if (cancelled) return;
+
+                subscription = await Location.watchPositionAsync(
+                    {
+                        accuracy: Location.Accuracy.Balanced,
+                        timeInterval: 10000,
+                        distanceInterval: 10,
+                    },
+                    updateLocation
+                );
+
+                if (cancelled) subscription.remove();
+            } catch (error) {
+                console.error('Could not track leader location:', error);
+            }
+
+            return () => subscription?.remove();
+        }
+
+        async function loadProfile() {
+            try {
+                const saved = await AsyncStorage.getItem(PROFILE_KEY);
+                const profile = saved ? JSON.parse(saved) : {};
+                setDisplayName(profile.display_name || 'Anonymous');
+            } catch (error) {
+                Alert.alert('Error', `Could not load profile: ${error.message}`);
+            }
+        }
+        loadProfile();
         let cancelled = false;
 
         async function loadSlides() {
             setLoading(true);
 
             try {
-                const result = await apiRequest('/slide');
+                const [slideResult, presentationResult] = await Promise.all([
+                    apiRequest('/slide'),
+                    apiRequest('/presentation'),
+                ]);
 
-                const items = Array.isArray(result)
-                    ? result
-                    : Array.isArray(result.data)
-                        ? result.data
+                const slidesList = Array.isArray(slideResult)
+                    ? slideResult
+                    : Array.isArray(slideResult.data)
+                        ? slideResult.data
                         : [];
 
-                const presentationSlides = items
+                const presentations = Array.isArray(presentationResult)
+                    ? presentationResult
+                    : Array.isArray(presentationResult.data)
+                        ? presentationResult.data
+                        : [];
+
+                const currentPresentation = presentations.find(
+                    presentation =>
+                        Number(presentation.presentation_id ?? presentation.id) ===
+                        Number(presentationId)
+                );
+
+                const presentationSlides = slidesList
                     .filter(
-                        (slide) =>
-                            Number(slide.presentation_id) ===
-                            Number(presentationId)
+                        slide =>
+                            Number(slide.presentation_id) === Number(presentationId)
                     )
                     .sort(
                         (a, b) =>
-                            Number(a.slide_position) -
-                            Number(b.slide_position)
+                            Number(a.slide_position) - Number(b.slide_position)
                     );
 
                 if (!cancelled) {
+                    setPresentationTitle(
+                        currentPresentation?.title ?? 'Untitled Presentation'
+                    );
                     setSlides(presentationSlides);
                     setSelectedIndex(0);
                 }
@@ -59,7 +167,7 @@ export default function StartPresentationScreen() {
                 if (!cancelled) {
                     Alert.alert(
                         'Error',
-                        `Could not load slides: ${error.message}`
+                        `Could not load presentation: ${error.message}`
                     );
                 }
             } finally {
@@ -67,16 +175,42 @@ export default function StartPresentationScreen() {
             }
         }
 
-        if (presentationId) {
-            loadSlides();
-        } else {
-            setLoading(false);
+        async function loadGroup() {
+            try {
+                const result = await apiRequest('/study_group');
+
+                const groups = Array.isArray(result)
+                    ? result
+                    : Array.isArray(result.data)
+                        ? result.data
+                        : [];
+
+                const currentGroup = groups.find(
+                    item =>
+                        String(item.group_id ?? item.id) === String(groupId)
+                );
+
+                if (!currentGroup) {
+                    console.log('Group not found:', groupId, groups);
+                    setLeaderId(undefined);
+                    return;
+                }
+
+                console.log('Current group:', currentGroup);
+                console.log('Leader ID:', currentGroup.leader_id);
+                console.log('Attendee ID:', attendeeId);
+
+                setLeaderId(currentGroup.leader_id ?? null);
+            } catch (error) {
+                console.error('Could not load group:', error);
+                setLeaderId(undefined);
+            }
         }
 
-        return () => {
-            cancelled = true;
-        };
-    }, [presentationId]);
+        trackLeaderLocation();
+        loadGroup();
+        loadSlides();
+    }, [presentationId, groupId]);
 
     async function finishPresentation() {
         if (finishing) return;
@@ -99,8 +233,14 @@ export default function StartPresentationScreen() {
             const groups = normaliseList(groupResult);
 
             const currentGroup = groups.find(
-                (item) => String(item.group_id) === String(groupId)
+                item => String(item.group_id ?? item.id) === String(groupId)
             );
+
+            if (currentGroup) {
+                setLeaderId(currentGroup.leader_id);
+            } else {
+                console.log('Group not found:', groupId, groups);
+            }
 
             if (!currentGroup) {
                 throw new Error('The group could not be found.');
@@ -189,18 +329,18 @@ export default function StartPresentationScreen() {
 
     if (loading) {
         return (
-            <View style={styles.centered}>
+            <View style={commonStyles.centered}>
                 <ActivityIndicator size="large" />
-                <Text style={styles.info}>Loading presentation...</Text>
+                <Text style={commonStyles.info}>Loading presentation...</Text>
             </View>
         );
     }
 
     if (slides.length === 0) {
         return (
-            <View style={styles.centered}>
-                <Text style={styles.title}>No slides found</Text>
-                <Text style={styles.info}>
+            <View style={commonStyles.centered}>
+                <Text style={commonStyles.title}>No slides found</Text>
+                <Text style={commonStyles.info}>
                     This presentation does not contain any slides yet.
                 </Text>
             </View>
@@ -208,15 +348,27 @@ export default function StartPresentationScreen() {
     }
 
     return (
-        <View style={styles.screen}>
-            <View style={styles.header}>
-                <Text style={styles.title}>Presentation</Text>
-                <Text style={styles.info}>Group ID: {groupId}</Text>
+        <View style={commonStyles.screen}>
+            <View style={commonStyles.header}>
+                <Text style={commonStyles.title}>{presentationTitle ?? 'Unnamed Presentation'}</Text>
+                <Text style={commonStyles.info}>
+                    Group ID: {groupId} | Display Name: {displayName} |
+                    Lat: {latitude ?? 'N/A'} | Lon: {longitude ?? 'N/A'} |
+                    Leader: {
+                        leaderId === undefined
+                            ? 'Unknown'
+                            : leaderId === null
+                                ? 'No leader assigned'
+                                : String(leaderId) === String(attendeeId)
+                                    ? 'Yes'
+                                    : 'No'
+                    }
+                </Text>
             </View>
 
             <ScrollView
-                style={styles.slideScroll}
-                contentContainerStyle={styles.slideContent}
+                style={commonStyles.slideScroll}
+                contentContainerStyle={commonStyles.slideContent}
             >
                 <SlidePreviewer
                     slide={slides[selectedIndex]}
@@ -226,20 +378,20 @@ export default function StartPresentationScreen() {
                 />
             </ScrollView>
 
-            <View style={styles.navigation}>
+            <View style={commonStyles.navigation}>
                 <Pressable
                     style={[
-                        styles.navButton,
+                        commonStyles.navButton,
                         selectedIndex === 0 && !completed &&
-                        styles.disabledButton,
+                        commonStyles.disabledButton,
                     ]}
                     disabled={selectedIndex === 0 && !completed}
                     onPress={goPrevious}
                 >
-                    <Text style={styles.navText}>Previous</Text>
+                    <Text style={commonStyles.navText}>Previous</Text>
                 </Pressable>
 
-                <Text style={styles.counter}>
+                <Text style={commonStyles.counter}>
                     {completed
                         ? 'Complete'
                         : `Slide ${selectedIndex + 1} of ${slides.length}`}
@@ -247,18 +399,16 @@ export default function StartPresentationScreen() {
 
                 <Pressable
                     style={[
-                        styles.navButton,
-                        finishing && styles.disabledButton,
+                        isLastSlide ? commonStyles.navButtonRed : commonStyles.navButton,
+                        finishing && commonStyles.disabledButton,
                     ]}
-                    onPress={completed || selectedIndex === slides.length - 1
-                        ? finishPresentation
-                        : goNext}
+                    onPress={isLastSlide ? finishPresentation : goNext}
                     disabled={finishing}
                 >
-                    <Text style={styles.navText}>
+                    <Text style={commonStyles.navText}>
                         {finishing
                             ? 'Finishing...'
-                            : completed || selectedIndex === slides.length - 1
+                            : isLastSlide
                                 ? 'Finish'
                                 : 'Next'}
                     </Text>
@@ -268,66 +418,3 @@ export default function StartPresentationScreen() {
     );
 }
 
-const styles = StyleSheet.create({
-    screen: {
-        flex: 1,
-        backgroundColor: '#f9fafb',
-    },
-    header: {
-        padding: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#e5e7eb',
-        backgroundColor: '#ffffff',
-    },
-    title: {
-        fontSize: 22,
-        fontWeight: '700',
-        color: '#111827',
-    },
-    info: {
-        color: '#6b7280',
-        marginTop: 6,
-    },
-    slideScroll: {
-        flex: 1,
-    },
-    slideContent: {
-        padding: 20,
-        flexGrow: 1,
-        backgroundColor: '#ffffff',
-        margin: 12,
-        borderRadius: 10,
-    },
-    centered: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 24,
-    },
-    navigation: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: 12,
-        borderTopWidth: 1,
-        borderTopColor: '#e5e7eb',
-        backgroundColor: '#ffffff',
-    },
-    navButton: {
-        backgroundColor: '#2563eb',
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-        borderRadius: 8,
-    },
-    disabledButton: {
-        opacity: 0.35,
-    },
-    navText: {
-        color: '#ffffff',
-        fontWeight: '600',
-    },
-    counter: {
-        color: '#374151',
-        fontWeight: '500',
-    },
-});
