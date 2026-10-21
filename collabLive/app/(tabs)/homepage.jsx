@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, Image } from 'react-native';
 import { commonStyles as styles } from '../../styles/commonstyles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback } from 'react';
@@ -31,13 +31,14 @@ export default function HomepageScreen() {
     );
     return (
         <View style={styles.centeredContainer}>
-            <View
+            <Image
+                source={require('../../assets/slide-example.jpg')}
                 style={{
                     width: '100%',
                     height: 300,
-                    backgroundColor: '#d1d5db',
                     borderRadius: 8,
                 }}
+                resizeMode="contain"
             />
 
             <Text style={styles.title}>Collab Live</Text>

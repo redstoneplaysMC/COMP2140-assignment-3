@@ -44,6 +44,14 @@ export default function TabLayout() {
                     ),
                 }}
             />
+            <Tabs.Screen
+                name="presentation"
+                options={{
+                    href: null,
+                    title: 'Presentation',
+                }}
+            />
         </Tabs>
+
     );
 }

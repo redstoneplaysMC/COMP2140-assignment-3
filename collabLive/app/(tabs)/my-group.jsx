@@ -10,10 +10,14 @@ import {
 import { apiRequest } from '../../lib/api';
 import { commonStyles as styles } from '../../styles/commonstyles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useCallback } from 'react';
 
 const PROFILE_KEY = '@collablive/profile';
+const GROUP_MEMBERSHIP_KEY = '@collablive/group_membership';
 
 export default function MyGroupScreen() {
+    const router = useRouter();
     const [group, setGroup] = useState(null);
     const [presentations, setPresentations] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -41,7 +45,7 @@ export default function MyGroupScreen() {
                 body: JSON.stringify({
                     group_id: nextGroupId,
                     presentation_id: 0,
-                    leader_id: 0,
+                    leader_id: attendee?.attendee_id ?? 0,
                     slide_id: 0,
                     slide_order: '',
                     latitude: 0,
@@ -52,6 +56,13 @@ export default function MyGroupScreen() {
             const createdGroup = createdResult.data ?? createdResult;
             const createdAttendee = await registerAttendee(createdGroup);
             setGroup(createdGroup);
+            await AsyncStorage.setItem(
+                GROUP_MEMBERSHIP_KEY,
+                JSON.stringify({
+                    group: createdGroup,
+                    attendee: createdAttendee,
+                })
+            );
             await apiRequest(`/study_group/${createdGroup.id}`, {
                 method: 'PATCH',
                 body: JSON.stringify({
@@ -121,6 +132,7 @@ export default function MyGroupScreen() {
             setGroup((currentGroup) => ({
                 ...currentGroup,
                 presentation_id: presentationId,
+                presentation_title: presentation.title ?? 'Untitled presentation',
             }));
 
             setPresentations([]);
@@ -141,15 +153,6 @@ export default function MyGroupScreen() {
         if (!group || !attendee) return;
 
         try {
-            // Mark this attendee as finished.
-            await apiRequest(`/attendee/${attendee.id}`, {
-                method: 'PATCH',
-                body: JSON.stringify({
-                    finished_viewing: true,
-                }),
-            });
-
-            // Check whether any attendees are still participating.
             const result = await apiRequest(
                 `/attendee?group_id=${encodeURIComponent(group.group_id)}`
             );
@@ -162,33 +165,48 @@ export default function MyGroupScreen() {
 
             const remainingAttendees = attendees.filter(
                 (item) =>
-                    item.id !== attendee.id &&
-                    item.attendee_id !== attendee.attendee_id &&
+                    String(item.id) !== String(attendee.id) &&
                     !item.finished_viewing
             );
 
             if (remainingAttendees.length === 0) {
-                console.log('Deleting group:', group.id, group.group_id);
+                // Last active attendee: delete every attendee in the group.
+                await Promise.all(
+                    attendees.map((item) =>
+                        apiRequest(`/attendee/${item.id}`, {
+                            method: 'DELETE',
+                        })
+                    )
+                );
 
-                const result = await apiRequest(`/study_group/${group.id}`, {
+                // Delete the group after its attendees have been removed.
+                await apiRequest(`/study_group/${group.id}`, {
+                    method: 'DELETE',
+                });
+            } else {
+                // Other active attendees remain: delete only this attendee.
+                await apiRequest(`/attendee/${attendee.id}`, {
                     method: 'DELETE',
                 });
 
-                console.log('Delete response:', result);
-                console.log('Group deleted successfully');
-            } else if (group.leader_id === attendee.attendee_id) {
-                const nextLeader = remainingAttendees[0];
-
-                await apiRequest(`/study_group/${group.id}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({
-                        leader_id: nextLeader.attendee_id,
-                    }),
-                });
+                // Transfer leadership if the departing attendee was the leader.
+                if (
+                    String(group.leader_id) === String(attendee.attendee_id)
+                ) {
+                    await apiRequest(`/study_group/${group.id}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({
+                            leader_id: remainingAttendees[0].attendee_id,
+                        }),
+                    });
+                }
             }
+
             setGroup(null);
             setAttendee(null);
             setPresentations([]);
+            await AsyncStorage.removeItem(GROUP_MEMBERSHIP_KEY);
+
         } catch (error) {
             Alert.alert(
                 'Error',
@@ -219,10 +237,110 @@ export default function MyGroupScreen() {
     }
 
     useEffect(() => {
-        // Load the user's existing active group here once the
-        // backend provides an endpoint to retrieve their membership.
-        loadPresentations();
+        async function initialise() {
+            setLoading(true);
+
+            try {
+                const savedMembership = await AsyncStorage.getItem(
+                    GROUP_MEMBERSHIP_KEY
+                );
+
+                if (savedMembership) {
+                    const membership = JSON.parse(savedMembership);
+                    const savedGroup = membership.group;
+                    const savedAttendee = membership.attendee;
+
+                    const result = await apiRequest('/study_group');
+
+                    const groups = Array.isArray(result)
+                        ? result
+                        : Array.isArray(result.data)
+                            ? result.data
+                            : [];
+
+                    const existingGroup = groups.find(
+                        item => item.id === savedGroup.id
+                    );
+
+                    if (existingGroup && existingGroup.is_active !== false) {
+                        setGroup(existingGroup);
+                        setAttendee(savedAttendee);
+                    } else {
+                        await AsyncStorage.removeItem(GROUP_MEMBERSHIP_KEY);
+                        setGroup(null);
+                        setAttendee(null);
+                    }
+                }
+
+                await loadPresentations();
+            } catch (error) {
+                Alert.alert(
+                    'Error',
+                    `Could not restore group membership: ${error.message}`
+                );
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        initialise();
     }, []);
+
+
+    async function restoreMembership() {
+        try {
+            const saved = await AsyncStorage.getItem(GROUP_MEMBERSHIP_KEY);
+
+            if (!saved) {
+                setGroup(null);
+                setAttendee(null);
+                return;
+            }
+
+            const membership = JSON.parse(saved);
+
+            const groupResult = await apiRequest('/study_group');
+
+            const groups = Array.isArray(groupResult)
+                ? groupResult
+                : Array.isArray(groupResult.data)
+                    ? groupResult.data
+                    : [];
+
+            const existingGroup = groups.find(
+                item => String(item.id) === String(membership.group.id)
+            );
+
+            if (!existingGroup || existingGroup.is_active === false) {
+                await AsyncStorage.removeItem(GROUP_MEMBERSHIP_KEY);
+                setGroup(null);
+                setAttendee(null);
+                return;
+            }
+
+            // Restore the saved membership without requiring an attendee lookup.
+            setGroup(existingGroup);
+            setAttendee(membership.attendee);
+
+            await AsyncStorage.setItem(
+                GROUP_MEMBERSHIP_KEY,
+                JSON.stringify({
+                    group: existingGroup,
+                    attendee: membership.attendee,
+                })
+            );
+        } catch (error) {
+            console.error('Could not restore group membership:', error);
+        }
+    }
+
+
+    useFocusEffect(
+        useCallback(() => {
+            restoreMembership();
+            loadPresentations();
+        }, [])
+    );
 
     if (loading) {
         return (
@@ -289,15 +407,42 @@ export default function MyGroupScreen() {
                             )}
                         </>
                     ) : (
-                        <Text style={styles.subtitle}>
-                            Selected Presentation: {
-                                presentations.find(
-                                    (presentation) =>
-                                        (presentation.presentation_id) ===
-                                        (group.presentation_id)
-                                )?.title ?? 'Name not found...'
-                            }
-                        </Text>
+                        <>
+                            <Text style={styles.subtitle}>
+                                Selected Presentation: {
+                                    presentations.find(
+                                        (presentation) =>
+                                            Number(presentation.presentation_id ?? presentation.id) ===
+                                            Number(group.presentation_id)
+                                    )?.title ?? 'No name found'
+                                }
+                            </Text>
+
+                            {group?.presentation_id && attendee && !attendee.finished_viewing ? (
+                                <Pressable
+                                    style={styles.button}
+                                    onPress={() =>
+                                        router.push({
+                                            pathname: '/presentation',
+                                            params: {
+                                                presentationId: String(group.presentation_id),
+                                                groupId: String(group.group_id),
+                                                attendeeId: String(attendee.attendee_id),
+                                            },
+                                        })
+                                    }
+                                >
+                                    <Text style={styles.buttonText}>Return to Presentation</Text>
+                                </Pressable>
+                            ) : (
+                                <Pressable
+                                    style={styles.button}
+                                    onPress={createNewPresentation}
+                                >
+                                    <Text style={styles.buttonText}>Create New Presentation</Text>
+                                </Pressable>
+                            )}
+                        </>
                     )}
 
                     <Pressable
@@ -306,6 +451,7 @@ export default function MyGroupScreen() {
                     >
                         <Text style={styles.buttonText}>Leave Group</Text>
                     </Pressable>
+
                 </>
             )}
 

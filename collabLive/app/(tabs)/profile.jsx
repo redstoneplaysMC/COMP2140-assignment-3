@@ -81,8 +81,7 @@ export default function ProfileScreen() {
 
             {savedName && (
                 <>
-                    <Text style={styles.info}>Profile created on this device.</Text>
-                    <Text style={styles.info}>Saved Name: {savedName}</Text>
+                    <Text style={styles.info}>Profile created on this device with saved name: {savedName}</Text>
                 </>
             )}
         </View>
