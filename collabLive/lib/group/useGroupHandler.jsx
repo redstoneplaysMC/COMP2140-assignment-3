@@ -1,5 +1,6 @@
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
 export default function useGroupHandler({
     apiRequest,
     PROFILE_KEY,
@@ -41,6 +42,8 @@ export default function useGroupHandler({
                 finished_viewing: false,
                 presentation_id: group.presentation_id ?? 0,
                 group_id: group.group_id,
+                latitude: null,
+                longitude: null,
             }),
         });
 
@@ -72,6 +75,7 @@ export default function useGroupHandler({
                     )
                 ) + 1;
 
+            // const location = await getCurrentLocation();
             const createdResult = await apiRequest('/study_group', {
                 method: 'POST',
                 body: JSON.stringify({
@@ -119,6 +123,8 @@ export default function useGroupHandler({
                     presentation_id: createdAttendee.presentation_id,
                 }));
             }
+            return createdGroup;
+
         } catch (error) {
             Alert.alert(
                 'Error',
@@ -128,6 +134,7 @@ export default function useGroupHandler({
             setLoading(false);
         }
     }
+
 
     async function leaveGroup() {
         if (!group || !attendee) return;
@@ -149,34 +156,27 @@ export default function useGroupHandler({
                     !item.finished_viewing
             );
 
-            if (remainingAttendees.length === 0) {
-                await Promise.all(
-                    attendees.map(item =>
-                        apiRequest(`/attendee/${item.id}`, {
-                            method: 'DELETE',
-                        })
-                    )
-                );
+            // Preserve the attendee record and its poll-response history.
+            await apiRequest(`/attendee/${attendee.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                    finished_viewing: true,
+                }),
+            });
 
+            if (remainingAttendees.length === 0) {
                 await apiRequest(`/study_group/${group.id}`, {
                     method: 'DELETE',
                 });
-            } else {
-                await apiRequest(`/attendee/${attendee.id}`, {
-                    method: 'DELETE',
+            } else if (
+                String(group.leader_id) === String(attendee.attendee_id)
+            ) {
+                await apiRequest(`/study_group/${group.id}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({
+                        leader_id: remainingAttendees[0].attendee_id,
+                    }),
                 });
-
-                if (
-                    String(group.leader_id) ===
-                    String(attendee.attendee_id)
-                ) {
-                    await apiRequest(`/study_group/${group.id}`, {
-                        method: 'PATCH',
-                        body: JSON.stringify({
-                            leader_id: remainingAttendees[0].attendee_id,
-                        }),
-                    });
-                }
             }
 
             await AsyncStorage.removeItem(GROUP_MEMBERSHIP_KEY);
@@ -192,6 +192,7 @@ export default function useGroupHandler({
         }
     }
 
+
     async function restoreMembership() {
         try {
             const saved = await AsyncStorage.getItem(GROUP_MEMBERSHIP_KEY);
@@ -204,27 +205,42 @@ export default function useGroupHandler({
 
             const membership = JSON.parse(saved);
 
-            if (!membership.group?.id || !membership.attendee) {
+            if (!membership.group?.id || !membership.attendee?.id) {
                 await AsyncStorage.removeItem(GROUP_MEMBERSHIP_KEY);
                 setGroup(null);
                 setAttendee(null);
                 return;
             }
 
-            const groupResult = await apiRequest('/study_group');
+            const [groupResult, attendeeResult] = await Promise.all([
+                apiRequest('/study_group'),
+                apiRequest(`/attendee?group_id=${encodeURIComponent(membership.group.group_id)}`),
+            ]);
 
             const groups = Array.isArray(groupResult)
                 ? groupResult
-                : Array.isArray(groupResult.data)
+                : Array.isArray(groupResult?.data)
                     ? groupResult.data
                     : [];
 
+            const attendees = Array.isArray(attendeeResult)
+                ? attendeeResult
+                : Array.isArray(attendeeResult?.data)
+                    ? attendeeResult.data
+                    : [];
+
             const existingGroup = groups.find(
-                item =>
-                    String(item.id) === String(membership.group.id)
+                item => String(item.id) === String(membership.group.id)
             );
 
-            if (!existingGroup || existingGroup.is_active === false) {
+            const existingAttendee = attendees.find(
+                item =>
+                    String(item.id) === String(membership.attendee.id) &&
+                    String(item.attendee_id) === String(membership.attendee.attendee_id) &&
+                    !item.finished_viewing
+            );
+
+            if (!existingGroup || existingGroup.is_active === false || !existingAttendee) {
                 await AsyncStorage.removeItem(GROUP_MEMBERSHIP_KEY);
                 setGroup(null);
                 setAttendee(null);
@@ -232,13 +248,13 @@ export default function useGroupHandler({
             }
 
             setGroup(existingGroup);
-            setAttendee(membership.attendee);
+            setAttendee(existingAttendee);
 
             await AsyncStorage.setItem(
                 GROUP_MEMBERSHIP_KEY,
                 JSON.stringify({
                     group: existingGroup,
-                    attendee: membership.attendee,
+                    attendee: existingAttendee,
                 })
             );
         } catch (error) {

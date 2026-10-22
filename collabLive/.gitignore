@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Caches
+.expo/cache
+node_modules/.cache
+./.expo/cache
+.npm-cache-temp/

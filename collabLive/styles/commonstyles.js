@@ -133,5 +133,29 @@ export const commonStyles = StyleSheet.create({
         color: '#374151',
         fontWeight: '500',
     },
-
+    container: {
+        flex: 1,
+        paddingTop: 12,
+    },
+    title: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        paddingHorizontal: 16,
+        paddingBottom: 12,
+    },
+    map: {
+        flex: 1,
+    },
+    footer: {
+        padding: 12,
+    },
+    attribution: {
+        fontSize: 11,
+        color: '#666',
+        marginTop: 4,
+    },
+    error: {
+        color: 'red',
+        paddingHorizontal: 16,
+    },
 });

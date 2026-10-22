@@ -1,0 +1,120 @@
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <style>
+        html,
+        body,
+        #map {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([-27.4973, 153.0142], 16);
+
+        L.tileLayer(
+            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }
+        ).addTo(map);
+
+        const userMarker = L.circleMarker([0, 0], {
+            radius: 8,
+            color: '#ffffff',
+            weight: 2,
+            fillColor: '#1677ff',
+            fillOpacity: 1
+        });
+
+        const nearbyCircle = L.circle([0, 0], {
+            radius: 300,
+            color: '#1677ff',
+            fillColor: '#1677ff',
+            fillOpacity: 0.08
+        });
+
+        const groupLayer = L.layerGroup().addTo(map);
+        let hasCentered = false;
+
+        window.updateMap = function (data) {
+            if (data.location) {
+                const point = [
+                    data.location.latitude,
+                    data.location.longitude
+                ];
+
+                userMarker.setLatLng(point);
+
+                if (!map.hasLayer(userMarker)) {
+                    userMarker.addTo(map);
+                    userMarker.bindPopup('Your location');
+                }
+
+                nearbyCircle.setLatLng(point);
+
+                if (!map.hasLayer(nearbyCircle)) {
+                    nearbyCircle.addTo(map);
+                }
+
+                if (!hasCentered) {
+                    map.setView(point, 16);
+                    hasCentered = true;
+                }
+            }
+
+            groupLayer.clearLayers();
+
+            (data.groups || []).forEach(group => {
+                const lat = Number(group.latitude);
+                const lng = Number(group.longitude);
+
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                    return;
+                }
+
+                const marker = L.marker([lat, lng]);
+
+                const popup = document.createElement('div');
+                const title = document.createElement('strong');
+
+                title.textContent =
+                    group.group_name || `Study group ${group.group_id}`;
+
+                popup.appendChild(title);
+
+                const joinButton = document.createElement('button');
+                joinButton.textContent = 'View / Join group';
+                joinButton.style.display = 'block';
+                joinButton.style.marginTop = '8px';
+
+                joinButton.onclick = () => {
+                    window.ReactNativeWebView.postMessage(
+                        JSON.stringify({
+                            type: 'select-group',
+                            groupId: group.group_id,
+                        })
+                    );
+                };
+
+                popup.appendChild(joinButton);
+                marker.bindPopup(popup);
+                groupLayer.addLayer(marker);
+            });
+        };
+
+        window.mapReady = true;
+        window.ReactNativeWebView?.postMessage('ready');
+    </script>
+</body>
+
+</html>

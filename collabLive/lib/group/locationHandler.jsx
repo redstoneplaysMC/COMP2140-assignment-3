@@ -1,3 +1,5 @@
+// Existing shared /_location API + SSE
+
 import {
     apiRequest,
     subscribeToEvents,
@@ -62,4 +64,50 @@ export function subscribeToLocationEvents({
         closed = true;
         unsubscribe();
     };
+}
+
+export function subscribeToAttendeeEvents({
+    groupId,
+    apiRequest,
+    onLocationUpdate,
+    onError,
+    headers = {},
+}) {
+    const unsubscribe = subscribeToEvents('/_events', {
+        headers,
+        onMessage: async event => {
+            try {
+                const change = JSON.parse(event.data);
+
+                if (
+                    change.entity !== 'attendee' ||
+                    change.type !== 'updated'
+                ) {
+                    return;
+                }
+
+                const result = await apiRequest(
+                    `/attendee/${change.id}`
+                );
+
+                const attendee = result?.data ?? result;
+
+                if (
+                    String(attendee.group_id) !== String(groupId) ||
+                    attendee.finished_viewing ||
+                    attendee.latitude == null ||
+                    attendee.longitude == null
+                ) {
+                    return;
+                }
+
+                onLocationUpdate(attendee);
+            } catch (error) {
+                onError?.(error);
+            }
+        },
+        onError,
+    });
+
+    return unsubscribe;
 }

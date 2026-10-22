@@ -232,6 +232,15 @@ export default function StartPresentationScreen() {
             const attendees = normaliseList(attendeeResult);
             const groups = normaliseList(groupResult);
 
+            console.log('Route IDs:', {
+                groupId,
+                presentationId,
+                attendeeId,
+            });
+
+            console.log('Groups:', groups);
+            console.log('Attendees:', attendees);
+
             const currentGroup = groups.find(
                 item => String(item.group_id ?? item.id) === String(groupId)
             );
@@ -252,6 +261,17 @@ export default function StartPresentationScreen() {
                     String(item.group_id) === String(groupId) &&
                     !item.finished_viewing
             );
+
+            console.log('Matching attendee:', attendees.find(
+                item => String(item.attendee_id) === String(attendeeId)
+            ));
+
+            console.log('Active attendee:', attendees.find(
+                item =>
+                    String(item.attendee_id) === String(attendeeId) &&
+                    String(item.group_id) === String(groupId) &&
+                    !item.finished_viewing
+            ));
 
             if (!currentAttendee) {
                 throw new Error('Your active attendee record could not be found.');

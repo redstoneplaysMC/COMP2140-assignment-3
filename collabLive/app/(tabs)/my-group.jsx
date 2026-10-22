@@ -14,16 +14,24 @@ import { useCallback } from 'react';
 import { useGroup } from '../../lib/group/sharedContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import useGroupHandler from '../../lib/group/useGroupHandler';
+import { useAttendeeLocation } from '../../lib/group/locationTracker';
+import * as Location from 'expo-location';
 
 const PROFILE_KEY = '@collablive/profile';
 const GROUP_MEMBERSHIP_KEY = '@collablive/group_membership';
 
 export default function MyGroupScreen() {
+    // MyGroupScreen manages the user's group and presentations.
+    // It uses the shared group context and handles group membership restoration, creation, and leaving.
     const router = useRouter();
     const { group, setGroup } = useGroup();
     const [presentations, setPresentations] = useState([]);
     const [loading, setLoading] = useState(false);
     const [attendee, setAttendee] = useState(null);
+    const [currentLocation, setCurrentLocation] = useState(null);
+    const [gettingLocation, setGettingLocation] = useState(false);
+
+    // useGroupHandler provides functions to create, leave, and restore group membership.
     const {
         createGroup,
         leaveGroup,
@@ -39,6 +47,56 @@ export default function MyGroupScreen() {
         setPresentations,
         setLoading,
     });
+
+    useAttendeeLocation(attendee, apiRequest);
+
+    async function getCurrentLocation() {
+        setGettingLocation(true);
+
+        try {
+            const { status } =
+                await Location.requestForegroundPermissionsAsync();
+
+            if (status !== 'granted') {
+                Alert.alert('Location Required', 'Please allow location access.');
+                return null;
+            }
+
+            const lastKnown = await Location.getLastKnownPositionAsync({
+                maxAge: 60000,
+                requiredAccuracy: 200,
+            });
+
+            if (lastKnown) {
+                console.log('Using cached location:', lastKnown.coords);
+                setCurrentLocation(lastKnown.coords);
+
+                Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Balanced,
+                })
+                    .then(position => setCurrentLocation(position.coords))
+                    .catch(error => console.warn('Location refresh failed:', error));
+
+                return lastKnown.coords;
+            }
+
+            console.log('No cached location; requesting fresh location');
+
+            const position = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Balanced,
+            });
+
+            console.log('Fresh location:', position.coords);
+            setCurrentLocation(position.coords);
+            return position.coords;
+        } catch (err) {
+            console.error('getCurrentLocation failed:', err);
+            Alert.alert('Location Error', err.message);
+            return null;
+        } finally {
+            setGettingLocation(false);
+        }
+    }
 
     async function loadPresentations() {
         setLoading(true);
@@ -101,6 +159,43 @@ export default function MyGroupScreen() {
         }
     }
 
+    async function handleCreateGroup() {
+        console.log('handleCreateGroup called');
+
+        try {
+            const createdGroup = await createGroup();
+            console.log('Created group:', createdGroup);
+
+            if (!createdGroup?.id) {
+                throw new Error('Group creation did not return a group ID.');
+            }
+
+            const coords = await getCurrentLocation();
+            console.log('Current coordinates:', coords);
+
+            if (!coords?.latitude || !coords?.longitude) {
+                throw new Error('Could not obtain valid coordinates.');
+            }
+
+            const updatedGroup = await apiRequest(
+                `/study_group/${createdGroup.id}`,
+                {
+                    method: 'PATCH',
+                    body: JSON.stringify({
+                        latitude: coords.latitude,
+                        longitude: coords.longitude,
+                    }),
+                }
+            );
+
+            console.log('Updated group from API:', updatedGroup);
+        } catch (error) {
+            console.error('Group location update failed:', error);
+            Alert.alert('Error', error.message);
+        }
+    }
+
+    // Initialise the group and presentations on component mount.
     useEffect(() => {
         async function initialise() {
             setLoading(true);
@@ -115,6 +210,13 @@ export default function MyGroupScreen() {
                     const savedGroup = membership.group;
                     const savedAttendee = membership.attendee;
                     const result = await apiRequest('/study_group');
+                    const records = Array.isArray(result)
+                        ? result
+                        : Array.isArray(result?.data)
+                            ? result.data
+                            : [];
+
+                    if (!cancelled) setGroups(records);
                     const groups = Array.isArray(result)
                         ? result
                         : Array.isArray(result.data)
@@ -144,8 +246,40 @@ export default function MyGroupScreen() {
                 setLoading(false);
             }
         }
+        async function loadLocation() {
+            try {
+                const { status } =
+                    await Location.requestForegroundPermissionsAsync();
+
+                if (status !== 'granted') {
+                    Alert.alert(
+                        'Location Required',
+                        'Please allow location access to create a group.'
+                    );
+                    return;
+                }
+
+                const cached = await Location.getLastKnownPositionAsync({
+                    maxAge: 60000,
+                    requiredAccuracy: 200,
+                });
+
+                if (cached) {
+                    setCurrentLocation(cached.coords);
+                } else {
+                    const position = await Location.getCurrentPositionAsync({
+                        accuracy: Location.Accuracy.Balanced,
+                    });
+
+                    setCurrentLocation(position.coords);
+                }
+            } catch (error) {
+                Alert.alert('Location Error', error.message);
+            }
+        }
 
         initialise();
+        loadLocation();
     }, []);
 
     useFocusEffect(
@@ -165,19 +299,40 @@ export default function MyGroupScreen() {
         <ScrollView contentContainerStyle={styles.container}>
             <Text style={styles.title}>My Group</Text>
 
-            {!group ? (
+            {!group && (
                 <>
+                    {currentLocation ? (
+                        <Text style={styles.description}>
+                            Your location:
+                            {'\n'}Latitude: {currentLocation.latitude.toFixed(6)}
+                            {'\n'}Longitude: {currentLocation.longitude.toFixed(6)}
+                        </Text>
+                    ) : (
+                        <Text style={styles.description}>
+                            Getting your location...
+                        </Text>
+                    )}
+
                     <Pressable
-                        style={styles.button}
-                        onPress={createGroup}
+                        style={[
+                            styles.button,
+                            (!currentLocation || gettingLocation) && { opacity: 0.5 },
+                        ]}
+                        onPress={handleCreateGroup}
+                        disabled={!currentLocation || gettingLocation}
                     >
                         <Text style={styles.buttonText}>Create Group</Text>
                     </Pressable>
-                    <Text style={styles.description}>You are not part of any group yet. Creating your own group will make your group discoverable to
-                        others, but also disables you from joining other groups.
+
+                    <Text style={styles.description}>
+                        You are not part of any group yet. Creating your own group will
+                        make your group discoverable to others, but also disables you
+                        from joining other groups.
                     </Text>
                 </>
-            ) : (
+            )}
+
+            {group && (
                 <>
                     <Text style={styles.subtitle}>
                         Group ID: {group.group_id}
@@ -248,24 +403,30 @@ export default function MyGroupScreen() {
                             ) : (
                                 <Pressable
                                     style={styles.button}
-                                    onPress={createNewPresentation}
+                                    onPress={() => {
+                                        Alert.alert(
+                                            'Not available',
+                                            'Creating a new presentation is not implemented yet.'
+                                        );
+                                    }}
                                 >
-                                    <Text style={styles.buttonText}>Create New Presentation</Text>
+                                    <Text style={styles.buttonText}>
+                                        'Creating a new presentation is not implemented yet.'
+                                    </Text>
                                 </Pressable>
                             )}
                         </>
                     )}
-
                     <Pressable
                         style={styles.button}
                         onPress={leaveGroup}
                     >
                         <Text style={styles.buttonText}>Leave Group</Text>
                     </Pressable>
-
                 </>
-            )}
+            )
+            }
 
-        </ScrollView>
+        </ScrollView >
     );
 }

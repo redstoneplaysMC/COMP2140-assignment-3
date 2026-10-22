@@ -2,7 +2,7 @@
   "expo": {
     "name": "collabLive",
     "slug": "collabLive",
-    "scheme": "collabLive",
+    "scheme": "collablive",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -35,7 +35,9 @@
           "photosPermission": "The app accesses your photos to let you share them with your friends."
         }
       ],
-      "expo-router"
+      "expo-router",
+      "expo-asset",
+      "expo-font"
     ]
   }
 }
